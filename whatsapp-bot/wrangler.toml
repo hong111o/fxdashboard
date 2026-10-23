@@ -1,0 +1,11 @@
+name = "fxwatch-whatsapp"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+GITHUB_REPO = "hong111o/fxdashboard"
+GITHUB_REF = "main"
+GRAPH_VERSION = "v23.0"
+
+# Secrets are set with `npx wrangler secret put NAME` (never commit them):
+#   VERIFY_TOKEN, APP_SECRET, OWNER_PHONE, WA_TOKEN, WA_PHONE_NUMBER_ID, GITHUB_TOKEN

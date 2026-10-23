@@ -1,5 +1,7 @@
-"""Text commands for changing targets, from Telegram or the workflow's "Run workflow" form.
+"""Text commands for changing targets, from WhatsApp, Telegram or the "Run workflow" form.
 
+  /check                        current rates vs your targets
+  /rate GBP/HKD                 latest mid-market rate for any pair
   /list                         show current targets and levels
   /target GBP/HKD 10.05         set a conversion alert's target
   /above AUD/USD 0.68           set a watch's upper level
@@ -7,9 +9,13 @@
   /clear AUD/USD [above|below]  remove a watch's level(s)
   /pause GBP/JPY                stop alerts for a pair (conversion or watch)
   /resume GBP/JPY               start them again
+  /help                         this list
+
+The leading / is optional.
 """
 
-HELP = __doc__.split("\n", 2)[2].rstrip()
+HELP = "Commands:\n" + __doc__.split("\n", 2)[2].rstrip()
+CHECK = object()  # returned for /check: the caller replies with a fresh status report
 
 
 def _num(text):
@@ -42,13 +48,28 @@ def describe(cfg):
     return "\n".join(lines)
 
 
-def handle(text, cfg, data):
-    """Apply one command to `data` (and the live `cfg`). Returns the reply text."""
+def handle(text, cfg, data, rate_lookup=None):
+    """Apply one command to `data` (and the live `cfg`). Returns the reply text, or CHECK.
+
+    `rate_lookup(base, quote)` returns the latest mid-market rate, for /rate.
+    """
     parts = text.strip().split()
     if not parts:
         return HELP
     cmd, args = parts[0].lower().lstrip("/").split("@")[0], parts[1:]
     try:
+        if cmd in ("help", "start", "?"):
+            return HELP
+        if cmd in ("check", "status"):
+            return CHECK
+        if cmd == "rate" and len(args) == 1 and rate_lookup:
+            base, _, quote = args[0].upper().partition("/")
+            if not (len(base) == 3 and len(quote) == 3):
+                raise ValueError("write the pair like GBP/HKD")
+            try:
+                return f"{base}/{quote} mid-market: {rate_lookup(base, quote):,.4f}"
+            except Exception as exc:
+                return f"Couldn't get {base}/{quote}: {exc}"
         if cmd in ("list", "targets"):
             return describe(cfg)
         if cmd == "target" and len(args) == 2:

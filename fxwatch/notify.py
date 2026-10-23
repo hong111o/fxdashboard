@@ -1,10 +1,17 @@
-"""Send notifications: WhatsApp (CallMeBot) first, Telegram as fallback.
+"""Send notifications: WhatsApp first, Telegram as fallback.
 
 Configured through environment variables (GitHub Actions secrets):
-  WHATSAPP_PHONE, CALLMEBOT_APIKEY        -> WhatsApp via CallMeBot
+  WHATSAPP_PHONE                          -> your number, e.g. +447700900123
+  WA_TOKEN, WA_PHONE_NUMBER_ID            -> WhatsApp bot (Meta Cloud API)
+  CALLMEBOT_APIKEY                        -> WhatsApp via CallMeBot
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID    -> Telegram bot
+
+The WhatsApp bot can only send free-form messages within 24 hours of your last
+message to it (outside that, Meta requires paid templates), so alerts use it only
+while that window is open and otherwise go through CallMeBot.
 """
 
+import json
 import os
 import urllib.parse
 import urllib.request
@@ -28,6 +35,22 @@ def _whatsapp(text):
     return True
 
 
+def _whatsapp_cloud(text):
+    token, number_id = os.environ.get("WA_TOKEN"), os.environ.get("WA_PHONE_NUMBER_ID")
+    phone = "".join(ch for ch in os.environ.get("WHATSAPP_PHONE", "") if ch.isdigit())
+    if not (token and number_id and phone):
+        return False
+    version = os.environ.get("GRAPH_VERSION", "v23.0")
+    body = json.dumps({"messaging_product": "whatsapp", "to": phone, "type": "text",
+                       "text": {"body": text}}).encode()
+    req = urllib.request.Request(f"https://graph.facebook.com/{version}/{number_id}/messages", data=body,
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                                          "User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        json.loads(resp.read())
+    return True
+
+
 def _telegram(text):
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not (token and chat):
@@ -38,10 +61,15 @@ def _telegram(text):
     return True
 
 
-def send(text):
-    """Try WhatsApp, then Telegram. Returns the channel used, or None."""
+def send(text, whatsapp_cloud=False):
+    """Try the WhatsApp bot (if its 24h window is open), CallMeBot, then Telegram.
+
+    Returns the channel used, or None.
+    """
+    channels = [("whatsapp-bot", _whatsapp_cloud)] if whatsapp_cloud else []
+    channels += [("whatsapp", _whatsapp), ("telegram", _telegram)]
     errors = []
-    for name, channel in (("whatsapp", _whatsapp), ("telegram", _telegram)):
+    for name, channel in channels:
         try:
             if channel(text):
                 return name
@@ -76,3 +104,9 @@ def telegram_commands(offset=None):
 
 def telegram_reply(text):
     return _telegram(text)
+
+
+def whatsapp_reply(text):
+    """Reply to a command sent to the WhatsApp bot (always inside the free 24h window)."""
+    if not _whatsapp_cloud(text):
+        send(text)

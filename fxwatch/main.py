@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -229,31 +230,49 @@ def load_state(path):
         return {}
 
 
-def process_commands(args, cfg, saved):
-    """Apply --command arguments and new Telegram messages; save settings if anything changed."""
-    before = json.dumps(saved, sort_keys=True)
-    texts = [t for c in args.command for t in c.split(";") if t.strip()]
-    replies = [commands.handle(text, cfg, saved) for text in texts]
+WHATSAPP_WINDOW = "_whatsapp_last_message"  # state key: when you last messaged the WhatsApp bot
+
+
+def collect_commands(args, saved):
+    """Return [(source, text)] from --command arguments and new Telegram messages."""
+    found = [(args.source, t.strip()) for c in args.command for t in re.split(r"[;\n]", c) if t.strip()]
     if not args.dry_run:
         try:
             texts, offset = notify.telegram_commands(saved.get("telegram_offset"))
             if offset is not None:
                 saved["telegram_offset"] = offset
+            found += [("telegram", t) for t in texts]
         except Exception as exc:
             print(f"reading Telegram commands failed: {exc}", file=sys.stderr)
-            texts = []
-        for text in texts:
-            reply = commands.handle(text, cfg, saved)
-            replies.append(reply)
-            try:
-                notify.telegram_reply(reply)
-            except Exception as exc:
-                print(f"Telegram reply failed: {exc}", file=sys.stderr)
-    for reply in replies:
-        print(reply, "\n")
-    if not args.dry_run and json.dumps(saved, sort_keys=True) != before:
-        store.save(saved, args.settings)
-    return replies
+    return found
+
+
+def rate_lookup(base, quote):
+    return rates.latest_rates(base, [quote])[quote]
+
+
+def status_text(results, watches):
+    lines = ["FX Watch status"]
+    for r in results:
+        want = "<=" if r.buying_base else ">="
+        best = f" via {r.best[1].provider}" if r.best and r.alert.get("basis", "best") == "best" else ""
+        lines.append(f"{'✅' if r.hit else '⏳'} {r.alert['pair']} {fmt(r.checked_rate)}{best} "
+                     f"(target {want} {fmt(float(r.alert['target']))})")
+    for w in watches:
+        day = f" {w.day_change:+.2f}%" if w.day_change is not None else ""
+        flags = f" - {'; '.join(s.text for s in w.signals)}" if w.signals else ""
+        lines.append(f"📈 {w.watch['pair']} {fmt(w.last)}{day}{flags}")
+    return "\n".join(lines)
+
+
+def send_reply(source, text):
+    try:
+        if source == "whatsapp":
+            notify.whatsapp_reply(text)
+        elif source == "telegram":
+            notify.telegram_reply(text)
+    except Exception as exc:
+        print(f"{source} reply failed: {exc}", file=sys.stderr)
 
 
 def run(argv=None):
@@ -264,6 +283,8 @@ def run(argv=None):
     ap.add_argument("--test-notify", action="store_true")
     ap.add_argument("--settings", default=store.DEFAULT_PATH)
     ap.add_argument("--command", action="append", default=[], help="apply a command, e.g. '/target GBP/HKD 10.05'")
+    ap.add_argument("--source", choices=["form", "whatsapp", "telegram"], default="form",
+                    help="where --command came from, and so where to reply")
     args = ap.parse_args(argv)
 
     if args.test_notify:
@@ -275,15 +296,26 @@ def run(argv=None):
     settings = cfg.setdefault("settings", {})
     saved = store.load(args.settings)
     store.apply(cfg, saved)
-    replies = process_commands(args, cfg, saved)
     now = dt.datetime.now(dt.timezone.utc)
     state = prune_state(load_state(args.state), now)
     results, watches, failed = [], [], False
 
+    before = json.dumps(saved, sort_keys=True)
+    replies = []  # (source, text); sent after the check so /check can report fresh rates
+    for source, text in collect_commands(args, saved):
+        replies.append((source, commands.handle(text, cfg, saved, rate_lookup)))
+        if source == "whatsapp" and not args.dry_run:
+            state[WHATSAPP_WINDOW] = {"sent_at": now.isoformat()}
+    if not args.dry_run and json.dumps(saved, sort_keys=True) != before:
+        store.save(saved, args.settings)
+
+    last_msg = state.get(WHATSAPP_WINDOW)
+    window_open = bool(last_msg) and now - dt.datetime.fromisoformat(last_msg["sent_at"]) < dt.timedelta(hours=23)
+
     def deliver(text):
         nonlocal failed
         try:
-            channel = notify.send(text)
+            channel = notify.send(text, whatsapp_cloud=window_open)
             print(f"-> notified via {channel}" if channel else "-> no notification channel configured")
             return channel
         except Exception as exc:
@@ -327,9 +359,15 @@ def run(argv=None):
             for s in fresh:
                 state[s.key] = {"sent_at": now.isoformat(), "rate": w.last}
 
+    replies = [(src, status_text(results, watches) if text is commands.CHECK else text) for src, text in replies]
+    for source, text in replies:
+        print(text, "\n")
+        if not args.dry_run:
+            send_reply(source, text)
+
     report = summary_markdown(results, now, watches)
     if replies:
-        report += "\n### Commands\n\n" + "\n\n".join(f"```\n{r}\n```" for r in replies) + "\n"
+        report += "\n### Commands\n\n" + "\n\n".join(f"```\n{t}\n```" for _, t in replies) + "\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write(report)

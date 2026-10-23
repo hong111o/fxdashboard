@@ -98,3 +98,58 @@ class PersistenceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewCommandsTest(unittest.TestCase):
+    def test_help_check_rate(self):
+        cfg, data = setup()
+        self.assertIn("/target", commands.handle("help", cfg, data))
+        self.assertIs(commands.handle("check", cfg, data), commands.CHECK)
+        self.assertEqual(commands.handle("rate gbp/aud", cfg, data, lambda b, q: 2.0), "GBP/AUD mid-market: 2.0000")
+        self.assertIn("Error", commands.handle("rate GBPAUD", cfg, data, lambda b, q: 2.0))
+
+    def test_slash_is_optional(self):
+        cfg, data = setup()
+        self.assertIn("OK", commands.handle("target GBP/HKD 10.1", cfg, data))
+
+
+class WhatsAppFlowTest(unittest.TestCase):
+    CFG = '[[alert]]\nname="x"\npair="GBP/HKD"\nsell="HKD"\nbuy="GBP"\namount=1\ntarget=10\nbasis="mid"\n'
+
+    def run_cmd(self, d, *extra, hit_rate=9.0):
+        cfg = os.path.join(d, "c.toml")
+        with open(cfg, "w") as f:
+            f.write(self.CFG)
+        result = main.Result(main.load_config(cfg)["alert"][0], mid=hit_rate)
+        with mock.patch("fxwatch.main.evaluate", return_value=result), \
+             mock.patch("fxwatch.notify.telegram_commands", return_value=([], None)), \
+             mock.patch("fxwatch.notify.whatsapp_reply") as wa_reply, \
+             mock.patch("fxwatch.notify.send", return_value="whatsapp-bot") as send:
+            main.run(["--config", cfg, "--state", os.path.join(d, "s.json"),
+                      "--settings", os.path.join(d, "settings.json"), *extra])
+        return wa_reply, send
+
+    def test_check_replies_with_status_on_whatsapp(self):
+        with tempfile.TemporaryDirectory() as d:
+            wa_reply, send = self.run_cmd(d, "--source", "whatsapp", "--command", "/check")
+            text = wa_reply.call_args[0][0]
+            self.assertIn("FX Watch status", text)
+            self.assertIn("✅ GBP/HKD 9.0000", text)
+            # you messaged the bot, so the alert may use the free WhatsApp window
+            self.assertEqual(send.call_args.kwargs, {"whatsapp_cloud": True})
+
+    def test_alerts_avoid_whatsapp_bot_without_recent_message(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, send = self.run_cmd(d)
+            self.assertEqual(send.call_args.kwargs, {"whatsapp_cloud": False})
+
+
+class NotifyOrderTest(unittest.TestCase):
+    def test_channel_order(self):
+        from fxwatch import notify
+        with mock.patch("fxwatch.notify._whatsapp_cloud", return_value=True) as cloud, \
+             mock.patch("fxwatch.notify._whatsapp", return_value=True) as callmebot:
+            self.assertEqual(notify.send("hi"), "whatsapp")
+            cloud.assert_not_called()
+            self.assertEqual(notify.send("hi", whatsapp_cloud=True), "whatsapp-bot")
+            self.assertEqual(callmebot.call_count, 1)

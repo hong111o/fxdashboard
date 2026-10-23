@@ -50,12 +50,18 @@ trading day.
 
 Changes are saved to `data/settings.json`, which overrides `config.toml`. The
 workflow commits it after each change, so it persists between runs and keeps
-a history. You can change settings three ways:
+a history. You can change settings four ways:
 
-**1. Telegram:** message your bot. It applies the command and replies on the
+**1. WhatsApp bot (recommended):** chat with FX Watch on WhatsApp and get a
+reply in about a minute. It's free, but needs a one-off setup: follow
+[docs/whatsapp-bot.md](docs/whatsapp-bot.md).
+
+**2. Telegram:** message your bot. It applies the command and replies on the
 next hourly run.
 
 ```
+/check                        current rates vs your targets
+/rate GBP/HKD                 latest mid-market rate for any pair
 /list                         show current targets and levels
 /target GBP/HKD 10.05         set a conversion alert's target
 /above AUD/USD 0.68           set a watch's upper level
@@ -65,16 +71,21 @@ next hourly run.
 /resume GBP/JPY               start them again
 ```
 
-**2. GitHub app or website (applies straight away):** go to **Actions → FX
+The leading `/` is optional. Put several commands in one message, one per
+line or separated by `;`.
+
+**3. GitHub app or website (applies straight away):** go to **Actions → FX
 Watch → Run workflow** and type the same command in the *command* box, e.g.
 `/target GBP/HKD 10.05; /above AUD/USD 0.68`.
 
-**3. Edit `config.toml`:** use this to add new pairs or providers. Values in
+**4. Edit `config.toml`:** use this to add new pairs or providers. Values in
 `data/settings.json` take priority, so for an existing pair use a command, or
 delete its entry from the settings file.
 
-WhatsApp via CallMeBot can only send messages, not receive them, which is
-why commands use Telegram.
+CallMeBot can only send WhatsApp messages, so commands use either the
+WhatsApp bot or Telegram. Alerts use the WhatsApp bot only within 24 hours of
+your last message to it, because outside that window Meta charges per
+message. At other times they go through CallMeBot, so it stays free.
 
 ## Where the "true" rates come from
 
@@ -133,6 +144,7 @@ Go to **Actions → FX Watch → Run workflow** and choose **test-notify**, then
 python -m fxwatch --dry-run        # print everything, send nothing
 python -m fxwatch --test-notify    # send a test message (needs the env vars above)
 python -m unittest -v              # run the tests
+node --test whatsapp-bot/worker.test.mjs   # test the WhatsApp relay
 ```
 
 ## Notes

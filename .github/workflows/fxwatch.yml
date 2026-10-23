@@ -14,9 +14,14 @@ on:
         description: "Optional: change settings, e.g. /target GBP/HKD 10.05 (separate several with ;). /list shows them."
         type: string
         default: ""
+      source:
+        description: "Where the command came from (the WhatsApp relay sets 'whatsapp' so the reply goes there)"
+        type: choice
+        options: [form, whatsapp]
+        default: form
   push:
     branches: [main]
-    paths: ["fxwatch/**", "tests/**"]
+    paths: ["fxwatch/**", "tests/**", "whatsapp-bot/**"]
   pull_request:
 
 concurrency:
@@ -33,6 +38,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m unittest -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test whatsapp-bot/worker.test.mjs
 
   check:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -58,12 +67,15 @@ jobs:
         env:
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          WA_TOKEN: ${{ secrets.WA_TOKEN }}
+          WA_PHONE_NUMBER_ID: ${{ secrets.WA_PHONE_NUMBER_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MODE: ${{ inputs.mode || 'check' }}
           COMMAND: ${{ inputs.command }}
+          SOURCE: ${{ inputs.source || 'form' }}
         run: |
-          args=()
+          args=(--source "$SOURCE")
           if [ -n "$COMMAND" ]; then args+=(--command "$COMMAND"); fi
           case "$MODE" in
             dry-run)     python -m fxwatch --dry-run "${args[@]}" ;;

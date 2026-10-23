@@ -61,7 +61,7 @@ class WatchRunTest(unittest.TestCase):
                 f.write(cfg_text)
             sent = []
             with mock.patch("fxwatch.rates.history", lambda b, q, n: series(values)), \
-                 mock.patch("fxwatch.notify.send", side_effect=lambda t: sent.append(t) or "telegram"):
+                 mock.patch("fxwatch.notify.send", side_effect=lambda t, **kw: sent.append(t) or "telegram"):
                 for _ in now_offsets:
                     self.assertEqual(main.run(["--config", cfg, "--state", state, "--settings", os.path.join(d, "settings.json")]), 0)
             return sent
