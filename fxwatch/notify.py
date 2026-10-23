@@ -50,3 +50,29 @@ def send(text):
     if errors:
         raise RuntimeError("; ".join(errors))
     return None
+
+
+def telegram_commands(offset=None):
+    """Fetch new messages sent to the bot by you (TELEGRAM_CHAT_ID only).
+
+    Returns (list of command texts, next offset). Telegram keeps unread messages
+    for 24 hours, so an hourly run never misses one.
+    """
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not (token and chat):
+        return [], offset
+    params = {"timeout": 0, "allowed_updates": '["message"]'}
+    if offset is not None:
+        params["offset"] = offset
+    data = get_json(f"https://api.telegram.org/bot{token}/getUpdates", params)
+    texts = []
+    for update in data.get("result", []):
+        offset = update["update_id"] + 1
+        msg = update.get("message") or {}
+        if str(msg.get("chat", {}).get("id")) == str(chat) and msg.get("text", "").startswith("/"):
+            texts.append(msg["text"])
+    return texts, offset
+
+
+def telegram_reply(text):
+    return _telegram(text)

@@ -63,7 +63,7 @@ class WatchRunTest(unittest.TestCase):
             with mock.patch("fxwatch.rates.history", lambda b, q, n: series(values)), \
                  mock.patch("fxwatch.notify.send", side_effect=lambda t: sent.append(t) or "telegram"):
                 for _ in now_offsets:
-                    self.assertEqual(main.run(["--config", cfg, "--state", state]), 0)
+                    self.assertEqual(main.run(["--config", cfg, "--state", state, "--settings", os.path.join(d, "settings.json")]), 0)
             return sent
 
     def test_dated_signal_fires_once(self):

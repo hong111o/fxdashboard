@@ -46,6 +46,36 @@ Signals use daily ECB closing rates, so they suit swing and position trading
 (days to weeks), not intraday trading. Each dated signal fires once per
 trading day.
 
+## Changing targets and levels
+
+Changes are saved to `data/settings.json`, which overrides `config.toml`. The
+workflow commits it after each change, so it persists between runs and keeps
+a history. You can change settings three ways:
+
+**1. Telegram:** message your bot. It applies the command and replies on the
+next hourly run.
+
+```
+/list                         show current targets and levels
+/target GBP/HKD 10.05         set a conversion alert's target
+/above AUD/USD 0.68           set a watch's upper level
+/below AUD/USD 0.64           set a watch's lower level
+/clear AUD/USD [above|below]  remove a watch's level(s)
+/pause GBP/JPY                stop alerts for a pair
+/resume GBP/JPY               start them again
+```
+
+**2. GitHub app or website (applies straight away):** go to **Actions → FX
+Watch → Run workflow** and type the same command in the *command* box, e.g.
+`/target GBP/HKD 10.05; /above AUD/USD 0.68`.
+
+**3. Edit `config.toml`:** use this to add new pairs or providers. Values in
+`data/settings.json` take priority, so for an existing pair use a command, or
+delete its entry from the settings file.
+
+WhatsApp via CallMeBot can only send messages, not receive them, which is
+why commands use Telegram.
+
 ## Where the "true" rates come from
 
 - **Live:** Wise's public comparison API (`api.wise.com/v3/comparisons`)

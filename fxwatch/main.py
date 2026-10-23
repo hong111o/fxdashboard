@@ -4,6 +4,7 @@ Usage:
   python -m fxwatch                  # check and notify
   python -m fxwatch --dry-run        # check and print, never notify or save state
   python -m fxwatch --test-notify    # send a test message to check your setup
+  python -m fxwatch --command "/target GBP/HKD 10.05"   # change a saved setting
 """
 
 import argparse
@@ -14,7 +15,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 
-from . import notify, providers, rates, signals
+from . import commands, notify, providers, rates, signals, store
 
 
 @dataclass
@@ -228,12 +229,41 @@ def load_state(path):
         return {}
 
 
+def process_commands(args, cfg, saved):
+    """Apply --command arguments and new Telegram messages; save settings if anything changed."""
+    before = json.dumps(saved, sort_keys=True)
+    texts = [t for c in args.command for t in c.split(";") if t.strip()]
+    replies = [commands.handle(text, cfg, saved) for text in texts]
+    if not args.dry_run:
+        try:
+            texts, offset = notify.telegram_commands(saved.get("telegram_offset"))
+            if offset is not None:
+                saved["telegram_offset"] = offset
+        except Exception as exc:
+            print(f"reading Telegram commands failed: {exc}", file=sys.stderr)
+            texts = []
+        for text in texts:
+            reply = commands.handle(text, cfg, saved)
+            replies.append(reply)
+            try:
+                notify.telegram_reply(reply)
+            except Exception as exc:
+                print(f"Telegram reply failed: {exc}", file=sys.stderr)
+    for reply in replies:
+        print(reply, "\n")
+    if not args.dry_run and json.dumps(saved, sort_keys=True) != before:
+        store.save(saved, args.settings)
+    return replies
+
+
 def run(argv=None):
     ap = argparse.ArgumentParser(prog="fxwatch")
     ap.add_argument("--config", default="config.toml")
     ap.add_argument("--state", default="state/state.json")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--test-notify", action="store_true")
+    ap.add_argument("--settings", default=store.DEFAULT_PATH)
+    ap.add_argument("--command", action="append", default=[], help="apply a command, e.g. '/target GBP/HKD 10.05'")
     args = ap.parse_args(argv)
 
     if args.test_notify:
@@ -243,6 +273,9 @@ def run(argv=None):
 
     cfg = load_config(args.config)
     settings = cfg.setdefault("settings", {})
+    saved = store.load(args.settings)
+    store.apply(cfg, saved)
+    replies = process_commands(args, cfg, saved)
     now = dt.datetime.now(dt.timezone.utc)
     state = prune_state(load_state(args.state), now)
     results, watches, failed = [], [], False
@@ -258,6 +291,8 @@ def run(argv=None):
             failed = True
 
     for alert in cfg.get("alert", []):
+        if alert.get("paused"):
+            continue
         alert.setdefault("history_days", settings.get("history_days", 30))
         try:
             r = evaluate(alert, cfg)
@@ -272,6 +307,8 @@ def run(argv=None):
             state[alert["name"]] = {"sent_at": now.isoformat(), "rate": r.checked_rate}
 
     for watch in cfg.get("watch", []):
+        if watch.get("paused"):
+            continue
         try:
             w = evaluate_watch(watch)
         except Exception as exc:
@@ -291,6 +328,8 @@ def run(argv=None):
                 state[s.key] = {"sent_at": now.isoformat(), "rate": w.last}
 
     report = summary_markdown(results, now, watches)
+    if replies:
+        report += "\n### Commands\n\n" + "\n\n".join(f"```\n{r}\n```" for r in replies) + "\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write(report)

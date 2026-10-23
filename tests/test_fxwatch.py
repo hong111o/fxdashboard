@@ -128,8 +128,8 @@ class RunTest(unittest.TestCase):
                         'amount=50000\ntarget=10.1\n')
             with mock.patch("fxwatch.notify.send", return_value="whatsapp") as send, \
                  mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": os.path.join(d, "summary.md")}):
-                self.assertEqual(main.run(["--config", cfg_path, "--state", state_path]), 0)
-                self.assertEqual(main.run(["--config", cfg_path, "--state", state_path]), 0)
+                self.assertEqual(main.run(["--config", cfg_path, "--state", state_path, "--settings", os.path.join(d, "settings.json")]), 0)
+                self.assertEqual(main.run(["--config", cfg_path, "--state", state_path, "--settings", os.path.join(d, "settings.json")]), 0)
             self.assertEqual(send.call_count, 1)
             self.assertIn("Wise", send.call_args[0][0])
             with open(os.path.join(d, "summary.md")) as f:
