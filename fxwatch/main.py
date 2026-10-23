@@ -14,7 +14,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 
-from . import notify, providers, rates
+from . import notify, providers, rates, signals
 
 
 @dataclass
@@ -54,6 +54,21 @@ class Result:
         return a < b if self.buying_base else a > b
 
 
+@dataclass
+class WatchResult:
+    watch: dict
+    series: list                     # (date, rate), oldest first
+    signals: list = field(default_factory=list)
+
+    @property
+    def last(self):
+        return self.series[-1][1]
+
+    @property
+    def day_change(self):
+        return (self.series[-1][1] / self.series[-2][1] - 1) * 100 if len(self.series) > 1 else None
+
+
 def load_config(path):
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
@@ -62,6 +77,9 @@ def load_config(path):
         a["pair"], a["sell"], a["buy"] = f"{base}/{quote}", a["sell"].upper(), a["buy"].upper()
         if {a["sell"], a["buy"]} != {base, quote}:
             raise ValueError(f"alert {a['name']!r}: sell/buy must be the two currencies of {a['pair']}")
+    for w in cfg.get("watch", []):
+        base, quote = w["pair"].upper().split("/")
+        w["pair"] = f"{base}/{quote}"
     return cfg
 
 
@@ -95,6 +113,41 @@ def evaluate(alert, cfg):
     except Exception as exc:
         result.errors.append(f"history unavailable: {exc}")
     return result
+
+
+def evaluate_watch(watch):
+    base, quote = watch["pair"].split("/")
+    series = rates.history(base, quote, signals.calendar_days_needed(watch))
+    return WatchResult(watch, series, signals.compute(watch, series))
+
+
+def new_signals(result, state, settings, now):
+    fresh = []
+    for s in result.signals:
+        prev = state.get(s.key)
+        if prev is None:
+            fresh.append(s)
+        elif not s.dated:
+            hours = (now - dt.datetime.fromisoformat(prev["sent_at"])).total_seconds() / 3600
+            if hours >= settings.get("cooldown_hours", 12):
+                fresh.append(s)
+    return fresh
+
+
+def watch_message(result, sigs):
+    w = result.watch
+    lines = [f"FX watch: {w['pair']} {fmt(result.last)} (as of {result.series[-1][0]})"]
+    lines += [f"- {s.text}" for s in sigs]
+    if result.day_change is not None:
+        lines.append(f"Day change: {result.day_change:+.2f}%")
+    if w.get("note"):
+        lines.append(w["note"])
+    return "\n".join(lines)
+
+
+def prune_state(state, now, days=30):
+    cutoff = now - dt.timedelta(days=days)
+    return {k: v for k, v in state.items() if dt.datetime.fromisoformat(v["sent_at"]) >= cutoff}
 
 
 def should_notify(result, state, settings, now):
@@ -132,8 +185,8 @@ def message(result, top_n):
     return "\n".join(lines)
 
 
-def summary_markdown(results, now):
-    out = [f"## FX Watch - {now:%Y-%m-%d %H:%M} UTC", "",
+def summary_markdown(results, now, watches=()):
+    out = [f"## FX Watch - {now:%Y-%m-%d %H:%M} UTC", "", "### Conversion targets", "",
            "| Alert | Mid | Best all-in | Best provider | Target | Range | Status |",
            "|---|---|---|---|---|---|---|"]
     for r in results:
@@ -156,6 +209,14 @@ def summary_markdown(results, now):
                        f"{(q.received / top - 1) * 100:+.2f}% | {q.source} |")
         for e in r.errors:
             out.append(f"\n> {e}")
+    if watches:
+        out += ["", "### Trading watchlist", "",
+                "| Pair | Last | Day | Range (look-back) | Signals |", "|---|---|---|---|---|"]
+        for w in watches:
+            vals = [r for _, r in w.series]
+            day = f"{w.day_change:+.2f}%" if w.day_change is not None else "–"
+            sigs = "; ".join(s.text for s in w.signals) or "–"
+            out.append(f"| {w.watch['pair']} | {fmt(w.last)} | {day} | {fmt(min(vals))} – {fmt(max(vals))} | {sigs} |")
     return "\n".join(out) + "\n"
 
 
@@ -182,9 +243,19 @@ def run(argv=None):
 
     cfg = load_config(args.config)
     settings = cfg.setdefault("settings", {})
-    state = load_state(args.state)
     now = dt.datetime.now(dt.timezone.utc)
-    results, failed = [], False
+    state = prune_state(load_state(args.state), now)
+    results, watches, failed = [], [], False
+
+    def deliver(text):
+        nonlocal failed
+        try:
+            channel = notify.send(text)
+            print(f"-> notified via {channel}" if channel else "-> no notification channel configured")
+            return channel
+        except Exception as exc:
+            print(f"-> notification failed: {exc}", file=sys.stderr)
+            failed = True
 
     for alert in cfg.get("alert", []):
         alert.setdefault("history_days", settings.get("history_days", 30))
@@ -197,17 +268,29 @@ def run(argv=None):
         results.append(r)
         text = message(r, settings.get("top_providers", 3))
         print(text, "\n")
-        if not args.dry_run and should_notify(r, state, settings, now):
-            try:
-                channel = notify.send(text)
-                print(f"-> notified via {channel}" if channel else "-> no notification channel configured")
-                if channel:
-                    state[alert["name"]] = {"sent_at": now.isoformat(), "rate": r.checked_rate}
-            except Exception as exc:
-                print(f"-> notification failed: {exc}", file=sys.stderr)
-                failed = True
+        if not args.dry_run and should_notify(r, state, settings, now) and deliver(text):
+            state[alert["name"]] = {"sent_at": now.isoformat(), "rate": r.checked_rate}
 
-    report = summary_markdown(results, now)
+    for watch in cfg.get("watch", []):
+        try:
+            w = evaluate_watch(watch)
+        except Exception as exc:
+            print(f"[{watch['pair']}] failed: {exc}", file=sys.stderr)
+            failed = True
+            continue
+        if not w.series:
+            continue
+        watches.append(w)
+        fresh = w.signals if args.dry_run else new_signals(w, state, settings, now)
+        if not fresh:
+            continue
+        text = watch_message(w, fresh)
+        print(text, "\n")
+        if not args.dry_run and deliver(text):
+            for s in fresh:
+                state[s.key] = {"sent_at": now.isoformat(), "rate": w.last}
+
+    report = summary_markdown(results, now, watches)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write(report)

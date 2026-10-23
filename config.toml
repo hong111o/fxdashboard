@@ -65,31 +65,91 @@ basis = "best"
 [wise_comparison]
 enabled = true
 
-# Manual providers: brokers/banks without a public quote API. The all-in rate is
+# Manual providers: banks/brokers without a public quote API. The all-in rate is
 #   received = (amount - fee) * mid_rate * (1 - margin_pct / 100)
-# margin_pct = how far the provider's rate is from mid-market.
-# fee        = fixed fee, in fee_currency (converted at mid-market).
+# margin_pct = how far the provider's rate is from mid-market (the hidden spread).
+# fee        = fixed fee per conversion/transfer, in fee_currency (converted at mid-market).
 # currencies = optional; only use this provider when both currencies are listed.
 #
 # !! The numbers below are rough starting points, NOT verified quotes.
-# !! Check your own accounts' pricing pages and edit them.
+# !! To calibrate a bank: note its quoted rate in the app, compare with the
+# !! mid-market rate at the same moment, and put the % difference in margin_pct.
+# !! Remember the outward TT (telegraphic transfer) fee if you send HKD/USD to a UK account.
+
+# --- accounts you already have ---
 
 [[provider]]
-name = "Interactive Brokers"
+name = "Hang Seng Bank (have)"
+margin_pct = 0.6         # placeholder - calibrate from the app's GBP/HKD rate
+fee = 0                  # add the outward TT fee if you send the GBP to the UK
+fee_currency = "HKD"
+currencies = ["HKD", "USD", "GBP", "EUR", "JPY", "AUD"]
+
+[[provider]]
+name = "Standard Chartered HK (have)"
+margin_pct = 0.6         # placeholder - calibrate from the app's GBP/HKD rate
+fee = 0                  # add the outward TT fee if you send the GBP to the UK
+fee_currency = "HKD"
+currencies = ["HKD", "USD", "GBP", "EUR", "JPY", "AUD"]
+
+# --- accounts you are considering ---
+# Wise is priced live by the comparison API above, so it doesn't need an entry here.
+
+[[provider]]
+name = "Interactive Brokers (considering)"
 margin_pct = 0.002       # IBKR Pro FX commission ~0.2 bps...
-fee = 2                  # ...with a USD 2 minimum per order
+fee = 2                  # ...with a USD 2 minimum per order (deposit/withdrawal fees not included)
 fee_currency = "USD"
 
-[[provider]]
-name = "HSBC HK (online FX)"
-margin_pct = 0.6         # placeholder - check the bank's quoted rate vs mid
-fee = 0
-fee_currency = "HKD"
-currencies = ["HKD", "USD", "GBP", "EUR", "JPY"]
+# ------------------------------------------------------ trading watchlist ----
+#
+# For short/mid-term trading ideas. Each watch can alert on:
+#   below / above   -> price levels you choose (repeats after cooldown_hours while true)
+#   move_pct        -> a daily move of at least this % either way
+#   breakout_days   -> a new N-working-day high or low
+#   sma_days        -> price crossing its N-day simple moving average (trend change)
+# Rates are daily ECB reference rates, so these are end-of-day signals,
+# suited to swing/position trading rather than intraday.
+# Add below/above levels once you've looked at the charts.
 
-[[provider]]
-name = "Revolut (Standard, weekday)"
-margin_pct = 0.0         # mid-market within the monthly fair-usage allowance
-fee = 0
-fee_currency = "GBP"
-currencies = ["GBP", "USD", "EUR", "JPY", "HKD"]
+[[watch]]
+pair = "AUD/USD"
+move_pct = 1.0
+breakout_days = 20
+sma_days = 50
+
+[[watch]]
+pair = "GBP/AUD"
+move_pct = 1.0
+breakout_days = 20
+sma_days = 50
+
+[[watch]]
+pair = "AUD/JPY"         # a classic risk-sentiment barometer
+move_pct = 1.2
+breakout_days = 20
+sma_days = 50
+
+[[watch]]
+pair = "NZD/USD"
+move_pct = 1.0
+breakout_days = 20
+sma_days = 50
+
+[[watch]]
+pair = "USD/JPY"
+move_pct = 1.0
+breakout_days = 20
+sma_days = 50
+
+[[watch]]
+pair = "EUR/USD"
+move_pct = 0.8
+breakout_days = 20
+sma_days = 50
+
+[[watch]]
+pair = "USD/CAD"
+move_pct = 0.8
+breakout_days = 20
+sma_days = 50

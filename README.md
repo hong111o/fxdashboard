@@ -7,7 +7,10 @@ A personal FX rate watcher. Every hour it:
    banks, brokers and transfer services, after their spread and fees.
 3. Sends you a **WhatsApp** message (or **Telegram** if WhatsApp isn't set up
    or fails) when a rate reaches your target.
-4. Writes a comparison table to the GitHub Actions run summary, which works as
+4. Watches a **trading watchlist** (AUD/USD, GBP/AUD, AUD/JPY, NZD/USD,
+   USD/JPY, EUR/USD, USD/CAD) for big daily moves, 20-day breakouts, 50-day
+   moving-average crosses and your own price levels.
+5. Writes a comparison table to the GitHub Actions run summary, which works as
    a simple dashboard.
 
 It runs on GitHub Actions, so there is no server to manage. It uses only the
@@ -28,15 +31,34 @@ Edit `config.toml` to change targets, amounts or pairs. You only say what you
 `basis = "best"` checks the target against the best rate you can actually get
 from a provider. `basis = "mid"` checks it against the mid-market rate.
 
+## Trading watchlist
+
+Each `[[watch]]` in `config.toml` can use any of these signals:
+
+| Setting | Alerts when |
+|---|---|
+| `below` / `above` | price is at or beyond your level (repeats after the cooldown while it holds) |
+| `move_pct` | the daily move is at least this % in either direction |
+| `breakout_days` | price makes a new N-working-day high or low |
+| `sma_days` | price crosses its N-day simple moving average (possible trend change) |
+
+Signals use daily ECB closing rates, so they suit swing and position trading
+(days to weeks), not intraday trading. Each dated signal fires once per
+trading day.
+
 ## Where the "true" rates come from
 
 - **Live:** Wise's public comparison API (`api.wise.com/v3/comparisons`)
   returns real quotes from Wise and from the banks and transfer providers it
   tracks for each currency route.
-- **Manual:** brokers and banks without a public API (Interactive Brokers,
-  HSBC HK, Revolut and so on) are priced from the `margin_pct` and `fee` you
-  enter in `config.toml`. **The shipped numbers are placeholders.** Check
-  your own accounts' pricing and update them.
+- **Manual:** banks and brokers without a public API are priced from the
+  `margin_pct` and `fee` you enter in `config.toml`. Your current accounts,
+  Hang Seng Bank and Standard Chartered HK, are set up, plus Interactive
+  Brokers as an account you are considering. Wise is priced live, so the
+  "vs best" column shows how much opening Wise or IBKR would save you.
+  **The shipped numbers are placeholders.** To calibrate a bank, compare its
+  in-app rate with the mid-market rate at the same moment, and include any
+  outward TT fee if you transfer the money to the UK.
 
 Mid-market rates come from [Frankfurter](https://frankfurter.dev) (ECB
 reference rates, updated once per working day around 16:00 CET), with
