@@ -1,0 +1,69 @@
+name: FX Watch
+
+on:
+  schedule:
+    - cron: "7 * * * *"   # every hour at :07 UTC
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check = normal run, dry-run = no notifications, test-notify = send a test message"
+        type: choice
+        options: [check, dry-run, test-notify]
+        default: check
+  push:
+    branches: [main]
+    paths: ["fxwatch/**", "tests/**"]
+  pull_request:
+
+concurrency:
+  group: fxwatch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest -v
+
+  check:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Alert state (when each alert last fired) is kept in the Actions cache
+      # so repeat alerts respect the cooldown without committing to the repo.
+      - uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: fxwatch-state-${{ github.run_id }}
+          restore-keys: fxwatch-state-
+
+      - name: Run FX Watch
+        env:
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: ${{ inputs.mode || 'check' }}
+        run: |
+          case "$MODE" in
+            dry-run)     python -m fxwatch --dry-run ;;
+            test-notify) python -m fxwatch --test-notify ;;
+            *)           python -m fxwatch ;;
+          esac
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: state
+          key: fxwatch-state-${{ github.run_id }}

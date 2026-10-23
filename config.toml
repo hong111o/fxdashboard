@@ -1,0 +1,95 @@
+# FX Watch configuration
+#
+# Pairs are written BASE/QUOTE, meaning "how many QUOTE for 1 BASE"
+# (e.g. GBP/HKD = 10.15 means 1 GBP costs 10.15 HKD).
+#
+# For each alert you say what you SELL and what you BUY. The direction of the
+# alert is worked out for you:
+#   - buying the BASE currency (e.g. sell HKD, buy GBP on GBP/HKD)
+#       -> you want the rate LOW, alert when rate <= target
+#   - selling the BASE currency (e.g. sell GBP, buy JPY on GBP/JPY)
+#       -> you want the rate HIGH, alert when rate >= target
+#
+# basis = "mid"  -> compare the target with the mid-market rate
+# basis = "best" -> compare the target with the best all-in rate you can
+#                   actually get (after spread and fees) from the providers below
+
+[settings]
+cooldown_hours = 12            # don't repeat the same alert within this window...
+realert_improvement_pct = 0.5  # ...unless the rate improved by this much since the last alert
+history_days = 30              # look-back window for "30-day low/high" context
+top_providers = 3              # how many providers to list in each notification
+
+# ---------------------------------------------------------------- alerts ----
+
+[[alert]]
+name = "HKD -> GBP"
+pair = "GBP/HKD"
+sell = "HKD"
+buy = "GBP"
+amount = 50000          # in the SELL currency; used to price fees and compare providers
+target = 10.00          # alert when 1 GBP costs <= 10.00 HKD
+basis = "best"
+
+[[alert]]
+name = "USD -> GBP"
+pair = "GBP/USD"
+sell = "USD"
+buy = "GBP"
+amount = 5000
+target = 1.28           # alert when 1 GBP costs <= 1.28 USD
+basis = "best"
+
+[[alert]]
+name = "Japan trip (GBP -> JPY)"
+pair = "GBP/JPY"
+sell = "GBP"
+buy = "JPY"
+amount = 1000
+target = 200            # alert when 1 GBP buys >= 200 JPY
+basis = "best"
+
+[[alert]]
+name = "Europe trip (GBP -> EUR)"
+pair = "GBP/EUR"
+sell = "GBP"
+buy = "EUR"
+amount = 1000
+target = 1.18           # alert when 1 GBP buys >= 1.18 EUR
+basis = "best"
+
+# ------------------------------------------------------------- providers ----
+#
+# Live quotes: Wise's public comparison API returns real quotes from Wise and
+# from banks / transfer services it tracks for each corridor.
+[wise_comparison]
+enabled = true
+
+# Manual providers: brokers/banks without a public quote API. The all-in rate is
+#   received = (amount - fee) * mid_rate * (1 - margin_pct / 100)
+# margin_pct = how far the provider's rate is from mid-market.
+# fee        = fixed fee, in fee_currency (converted at mid-market).
+# currencies = optional; only use this provider when both currencies are listed.
+#
+# !! The numbers below are rough starting points, NOT verified quotes.
+# !! Check your own accounts' pricing pages and edit them.
+
+[[provider]]
+name = "Interactive Brokers"
+margin_pct = 0.002       # IBKR Pro FX commission ~0.2 bps...
+fee = 2                  # ...with a USD 2 minimum per order
+fee_currency = "USD"
+
+[[provider]]
+name = "HSBC HK (online FX)"
+margin_pct = 0.6         # placeholder - check the bank's quoted rate vs mid
+fee = 0
+fee_currency = "HKD"
+currencies = ["HKD", "USD", "GBP", "EUR", "JPY"]
+
+[[provider]]
+name = "Revolut (Standard, weekday)"
+margin_pct = 0.0         # mid-market within the monthly fair-usage allowance
+fee = 0
+fee_currency = "GBP"
+currencies = ["GBP", "USD", "EUR", "JPY", "HKD"]
